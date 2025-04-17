@@ -87,51 +87,65 @@ async function searchVideos() {
 
 // 動画のレベル適合度を評価する関数
 function evaluateVideoLevel(video, level) {
-  if (!video || !video.snippet) return 0;
+  if (!video || !video.snippet) return 0.5; // デフォルト値を返す
   
   const title = video.snippet.title || '';
   const description = video.snippet.description || '';
   const content = title + ' ' + description;
   
-  // 初心者向けの単語
-  const beginnerTerms = ['入門', '基礎', '初心者', '簡単', 'わかりやすい', '基本', '初級', 'はじめて'];
+  // 初心者向けの単語（日本語と英語）
+  const beginnerTerms = ['入門', '基礎', '初心者', '簡単', 'わかりやすい', '基本', '初級', 'はじめて',
+                         'beginner', 'basic', 'introduction', 'easy', 'simple', 'fundamental'];
   
-  // 中級者向けの単語
-  const intermediateTerms = ['実践', '応用', 'テクニック', 'ノウハウ', '中級', '効率的', '改善'];
+  // 中級者向けの単語（日本語と英語）
+  const intermediateTerms = ['実践', '応用', 'テクニック', 'ノウハウ', '中級', '効率的', '改善',
+                            'intermediate', 'practical', 'technique', 'efficient', 'improve'];
   
-  // 上級者向けの単語
-  const expertTerms = ['高度', '専門', '詳細', '上級', '最新', '研究', '最適化', '先端', '理論'];
+  // 上級者向けの単語（日本語と英語）
+  const expertTerms = ['高度', '専門', '詳細', '上級', '最新', '研究', '最適化', '先端', '理論',
+                      'advanced', 'expert', 'professional', 'detailed', 'optimization', 'theory'];
   
-  let score = 0.5; // デフォルトは中間
+  // 単語の出現回数をカウント
+  let beginnerCount = 0;
+  let intermediateCount = 0;
+  let expertCount = 0;
   
-  // 単語の出現に基づいてスコアを調整
   beginnerTerms.forEach(term => {
-    if (content.includes(term)) score -= 0.1;
+    if (content.toLowerCase().includes(term.toLowerCase())) beginnerCount++;
   });
   
   intermediateTerms.forEach(term => {
-    if (content.includes(term)) score += 0.05;
+    if (content.toLowerCase().includes(term.toLowerCase())) intermediateCount++;
   });
   
   expertTerms.forEach(term => {
-    if (content.includes(term)) score += 0.1;
+    if (content.toLowerCase().includes(term.toLowerCase())) expertCount++;
   });
   
-  // 0.1から0.9の範囲に収める
-  score = Math.max(0.1, Math.min(0.9, score));
+  // スコアの計算（単語の出現回数に基づく）
+  let score = 0.5; // デフォルトは中間
+  
+  if (beginnerCount > intermediateCount && beginnerCount > expertCount) {
+    score = 0.3; // 初心者向け
+  } else if (expertCount > beginnerCount && expertCount > intermediateCount) {
+    score = 0.8; // 専門家向け
+  } else if (intermediateCount > 0) {
+    score = 0.6; // 中級者向け
+  }
   
   // レベルに応じた適合度を計算
   let levelFit = 0;
   
   if (level === 'beginner') {
-    levelFit = 1 - score; // スコアが低いほど初心者向け
+    levelFit = 1 - score * 0.8; // スコアが低いほど初心者向け
   } else if (level === 'intermediate') {
     levelFit = 1 - Math.abs(score - 0.5) * 2; // 中間に近いほど中級者向け
   } else if (level === 'expert') {
     levelFit = score; // スコアが高いほど専門家向け
   }
   
-  return levelFit;
+  // 最低0.3の適合度を保証（完全に除外されないように）
+  return Math.max(0.3, levelFit);
 }
 
 // 再生リスト作成関数
@@ -158,11 +172,14 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   }
   
   // レベルに基づいて動画をソート
-  filteredVideos.sort((a, b) => {
+  const levelSortedVideos = [...filteredVideos].sort((a, b) => {
     const levelFitA = evaluateVideoLevel(a, level);
     const levelFitB = evaluateVideoLevel(b, level);
     return levelFitB - levelFitA; // レベル適合度の高い順
   });
+  
+  // 上位の動画を選択（レベルに最適な動画を優先）
+  const selectedVideos = levelSortedVideos.slice(0, Math.min(5, levelSortedVideos.length));
   
   // ローディング表示
   document.getElementById('summary').textContent = '動画を分析中...これには数分かかる場合があります。';
@@ -171,7 +188,7 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   let analyzedVideos = 0;
   
   // 各動画を分析し、関連セグメントを抽出
-  for (const video of filteredVideos) {
+  for (const video of selectedVideos) {
     // 目標時間に達したら終了
     if (totalDuration >= targetDurationSeconds) break;
     
@@ -179,7 +196,7 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
       const videoId = video.id.videoId;
       
       // 進捗状況を更新
-      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${Math.min(filteredVideos.length, 10)}の動画を処理しています。`;
+      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${selectedVideos.length}の動画を処理しています。`;
       
       // 動画分析APIを呼び出し
       const response = await fetch('/api/analyze-video', {
@@ -202,8 +219,12 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
         continue;
       }
       
-      // 関連度でセグメントをソート
-      data.segments.sort((a, b) => b.relevance - a.relevance);
+      // 関連度とレベル適合度の積でセグメントをソート
+      data.segments.sort((a, b) => {
+        const scoreA = a.relevance * a.levelFit;
+        const scoreB = b.relevance * b.levelFit;
+        return scoreB - scoreA;
+      });
       
       // 最も関連度の高いセグメントを追加
       for (const segment of data.segments) {
@@ -238,8 +259,8 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
       analyzedVideos++;
     }
     
-    // 最大10本の動画まで分析
-    if (analyzedVideos >= 10) break;
+    // 最大5本の動画まで分析
+    if (analyzedVideos >= 5) break;
   }
   
   // 再生リストを表示
