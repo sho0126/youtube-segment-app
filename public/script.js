@@ -4,7 +4,7 @@ let currentPlaylist = [];
 let currentIndex = 0;
 
 // YouTube IFrame Player APIの準備
-function onYouTubeIframeAPIReady()  {
+function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
     height: '360',
     width: '640',
@@ -59,7 +59,14 @@ async function searchVideos() {
     const data = await response.json();
     
     // 検索結果から再生リストを作成
-    createPlaylist(data.items, theme);
+    // data.itemsが存在するか確認
+    if (data && data.items && Array.isArray(data.items)) {
+      createPlaylist(data.items, theme);
+    } else {
+      console.error('Invalid response format:', data);
+      alert('検索結果のフォーマットが無効です');
+      document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
+    }
     
     // 検索完了後、ローディング表示を非表示
     if (loadingElement) {
@@ -85,9 +92,15 @@ function createPlaylist(videos, theme) {
   
   // 各動画から簡易的なセグメントを作成
   videos.forEach(video => {
+    // videoとvideo.idが存在するか確認
+    if (!video || !video.id || !video.id.videoId) {
+      console.warn('Invalid video object:', video);
+      return; // この動画をスキップ
+    }
+    
     const videoId = video.id.videoId;
-    const title = video.snippet.title;
-    const description = video.snippet.description;
+    const title = video.snippet ? video.snippet.title : 'タイトルなし';
+    const description = video.snippet ? video.snippet.description : '';
     
     // テーマとの関連性を簡易的に判断（実際はもっと複雑なロジックが必要）
     const isRelevant = title.toLowerCase().includes(theme.toLowerCase()) || 
@@ -107,6 +120,9 @@ function createPlaylist(videos, theme) {
   
   // 再生リストを表示
   displayPlaylist();
+  
+  // 関連テーマを表示
+  displayRelatedThemes(theme);
   
   // 最初のセグメントを再生
   if (currentPlaylist.length > 0) {
@@ -148,6 +164,43 @@ function displayPlaylist() {
   } else {
     summaryElement.textContent = '';
   }
+}
+
+// 関連テーマを表示する関数
+function displayRelatedThemes(theme) {
+  const relatedThemesElement = document.getElementById('related-themes');
+  if (!relatedThemesElement) return;
+  
+  // 関連テーマのリストを生成
+  const relatedThemes = generateRelatedThemes(theme);
+  
+  let themesHTML = '<ul>';
+  relatedThemes.forEach(relatedTheme => {
+    themesHTML += `<li><a href="#" onclick="setTheme('${relatedTheme}'); return false;">${relatedTheme}</a></li>`;
+  });
+  themesHTML += '</ul>';
+  
+  relatedThemesElement.innerHTML = themesHTML;
+}
+
+// 関連テーマを生成する関数
+function generateRelatedThemes(theme) {
+  // 簡易的な実装
+  const themes = [
+    `${theme}の基礎`,
+    `${theme}の応用`,
+    `${theme}の歴史`,
+    `${theme}の最新動向`,
+    `${theme}と関連技術`
+  ];
+  
+  return themes;
+}
+
+// テーマを設定する関数
+function setTheme(theme) {
+  document.getElementById('theme-input').value = theme;
+  searchVideos();
 }
 
 // 現在のセグメントを再生する関数
