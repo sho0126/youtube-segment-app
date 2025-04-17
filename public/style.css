@@ -177,6 +177,48 @@ select {
   100% { transform: rotate(360deg); }
 }
 
+/* 要約セクションのスタイル */
+.summary-section {
+  margin-bottom: 20px;
+}
+
+.summary-section h3 {
+  margin-top: 15px;
+  margin-bottom: 10px;
+  color: #333;
+  font-size: 1.2em;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 5px;
+}
+
+.keywords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.keyword {
+  background-color: #f0f0f0;
+  padding: 5px 10px;
+  border-radius: 5px;
+  font-size: 0.9em;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+#summary {
+  line-height: 1.5;
+}
+
+#summary ul, #summary ol {
+  padding-left: 20px;
+  margin: 10px 0;
+}
+
+#summary li {
+  margin-bottom: 5px;
+}
+
 @media (max-width: 768px) {
   .search-container {
     flex-direction: column;
@@ -189,5 +231,9 @@ select {
   #player-container iframe {
     width: 100%;
     height: auto;
+  }
+  
+  #theme-input, select, #search-button {
+    width: 100%;
   }
 }
