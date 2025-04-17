@@ -29,7 +29,7 @@ app.get('/api/search', async (req, res) => {
         key: YOUTUBE_API_KEY,
         type: 'video'
       }
-    })  ;
+    })   ;
     
     // APIキーが無効または制限されている場合のチェック
     if (!response.data || !response.data.items) {
@@ -64,7 +64,7 @@ app.post('/api/analyze-video', async (req, res) => {
         id: videoId,
         key: YOUTUBE_API_KEY
       }
-    })  ;
+    })   ;
     
     if (!response.data || !response.data.items || response.data.items.length === 0) {
       console.log(`Video ${videoId} not found`);
@@ -110,7 +110,7 @@ app.get('/api/video/:id', async (req, res) => {
         id,
         key: YOUTUBE_API_KEY
       }
-    })  ;
+    })   ;
     
     // 動画情報を返す
     res.json(response.data);
@@ -254,8 +254,8 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
 各セグメントは異なる時間帯にしてください。重複するセグメントは避けてください。
 
 各セグメントについて以下の情報を含めてください：
-1. 開始時間（秒）- 動画の長さ内に収めてください
-2. 終了時間（秒）- 開始時間より後で、動画の長さ内に収めてください
+1. 開始時間（秒）- 必ず整数の秒数で指定してください（例：120）。動画の長さ内に収めてください。
+2. 終了時間（秒）- 必ず整数の秒数で指定してください（例：180）。開始時間より後で、動画の長さ内に収めてください。
 3. 関連度（0-1の数値）- ${level}レベルでの「${theme}」との関連性
 4. セグメントの要約 - 推測される内容の簡潔な説明
 5. レベル適合度（0-1の数値）- ${level}レベルにどれだけ適しているか
@@ -266,6 +266,7 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
 - 開始時間と終了時間は動画の長さ（${duration}秒）以内にしてください
 - 難易度「${level}」に合わせた分析を行ってください
 - 関連度が0.7未満のセグメントは含めないでください
+- 時間は必ず秒数のみで表記してください。「02:12」のような時間表記は使わないでください。
 
 結果は以下のJSON形式で返してください（必ずJSON形式を守ってください）：
 {
@@ -307,7 +308,16 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       const jsonString = jsonMatch ? jsonMatch[0] : '{"segments":[]}';
       
-      const parsed = JSON.parse(jsonString);
+      // 時間表記を秒数に変換する前処理を追加
+      const preprocessedJsonString = jsonString.replace(
+        /"(startTime|endTime)":\s*(\d+):(\d+)/g, 
+        (match, key, minutes, seconds) => {
+          const totalSeconds = parseInt(minutes) * 60 + parseInt(seconds);
+          return `"${key}": ${totalSeconds}`;
+        }
+      );
+      
+      const parsed = JSON.parse(preprocessedJsonString);
       
       // セグメントの検証と修正
       if (parsed.segments && Array.isArray(parsed.segments)) {
