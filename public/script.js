@@ -1,15 +1,18 @@
-// YouTube Player APIの変数
+// グローバル変数
 let player;
 let currentPlaylist = [];
 let currentIndex = 0;
 
-// YouTube IFrame Player APIの準備
+// YouTube IFrame Player APIの読み込み完了時に呼ばれる関数
 function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
     height: '360',
     width: '640',
+    videoId: '',
     playerVars: {
-      'playsinline': 1
+      'playsinline': 1,
+      'autoplay': 0,
+      'controls': 1
     },
     events: {
       'onReady': onPlayerReady,
@@ -18,21 +21,21 @@ function onYouTubeIframeAPIReady() {
   });
 }
 
-// プレイヤー準備完了時
+// プレーヤーの準備完了時に呼ばれる関数
 function onPlayerReady(event) {
   console.log('Player ready');
+  document.getElementById('search-button').addEventListener('click', searchVideos);
+  document.getElementById('prev-button').addEventListener('click', playPrevious);
+  document.getElementById('next-button').addEventListener('click', playNext);
 }
 
-// プレイヤーの状態変化時
+// プレーヤーの状態変化時に呼ばれる関数
 function onPlayerStateChange(event) {
-  // 動画が終了したら次の動画へ
+  // 動画が終了したら次の動画を再生
   if (event.data === YT.PlayerState.ENDED) {
-    playNextSegment();
+    playNext();
   }
 }
-
-// 検索ボタンのイベントリスナー
-document.getElementById('search-button').addEventListener('click', searchVideos);
 
 // 動画を検索する関数
 async function searchVideos() {
@@ -45,134 +48,187 @@ async function searchVideos() {
     return;
   }
   
+  // 検索中の表示
+  document.getElementById('playlist').innerHTML = '<div class="loading">検索中...</div>';
+  document.getElementById('summary').innerHTML = '<div class="loading">分析中...</div>';
+  document.getElementById('related-topics').innerHTML = '';
+  
   try {
-    // 検索中の表示
-    document.getElementById('summary').textContent = '検索中...';
-    
     // APIリクエスト
-    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&maxResults=5`);
+    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&level=${encodeURIComponent(level)}&duration=${encodeURIComponent(duration)}`);
     const data = await response.json();
     
-    // 検索結果から再生リストを作成
-    createPlaylist(data.items, theme);
+    if (data.length === 0) {
+      document.getElementById('playlist').innerHTML = '<div class="loading">該当する動画が見つかりませんでした</div>';
+      document.getElementById('summary').innerHTML = '';
+      return;
+    }
+    
+    // プレイリストを作成
+    createPlaylist(data, theme);
+    
+    // 最初の動画を再生
+    playVideo(0);
+    
+    // 関連トピックを表示
+    displayRelatedTopics(data);
   } catch (error) {
     console.error('Error searching videos:', error);
-    alert('動画の検索中にエラーが発生しました');
-    document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
+    document.getElementById('playlist').innerHTML = '<div class="loading">エラーが発生しました</div>';
+    document.getElementById('summary').innerHTML = '';
   }
 }
 
-// 再生リストを作成する関数
+// プレイリストを作成する関数
 function createPlaylist(videos, theme) {
-  currentPlaylist = [];
+  currentPlaylist = videos;
   currentIndex = 0;
   
-  // 各動画から簡易的なセグメントを作成
-  videos.forEach(video => {
-    const videoId = video.id.videoId;
-    const title = video.snippet.title;
-    const description = video.snippet.description;
-    
-    // テーマとの関連性を簡易的に判断（実際はもっと複雑なロジックが必要）
-    const isRelevant = title.toLowerCase().includes(theme.toLowerCase()) || 
-                       description.toLowerCase().includes(theme.toLowerCase());
-    
-    if (isRelevant) {
-      // 簡易的なセグメント（最初の2分間）
-      currentPlaylist.push({
-        videoId,
-        title,
-        startTime: 0,
-        endTime: 120, // 2分間
-        description
-      });
-    }
-  });
-  
-  // 再生リストを表示
-  displayPlaylist();
-  
-  // 最初のセグメントを再生
-  if (currentPlaylist.length > 0) {
-    playCurrentSegment();
-  } else {
-    alert('関連する動画が見つかりませんでした');
-    document.getElementById('summary').textContent = '関連する動画が見つかりませんでした。別のテーマで試してみてください。';
-  }
-}
-
-// 再生リストを表示する関数
-function displayPlaylist() {
   const playlistElement = document.getElementById('playlist');
   playlistElement.innerHTML = '';
   
-  currentPlaylist.forEach((segment, index) => {
-    const li = document.createElement('li');
-    li.textContent = `${segment.title} (0:00 - ${Math.floor(segment.endTime / 60)}:${segment.endTime % 60 < 10 ? '0' + segment.endTime % 60 : segment.endTime % 60})`;
-    li.classList.add('playlist-item');
-    if (index === currentIndex) {
-      li.classList.add('current');
-    }
+  videos.forEach((video, index) => {
+    const segment = video.currentSegment;
+    const startTime = formatTime(segment.startTime);
+    const endTime = formatTime(segment.endTime);
     
-    li.addEventListener('click', () => {
-      currentIndex = index;
-      playCurrentSegment();
+    const listItem = document.createElement('li');
+    listItem.className = 'playlist-item';
+    listItem.dataset.index = index;
+    listItem.innerHTML = `
+      <div class="playlist-item-title">${video.snippet.title}</div>
+      <div class="playlist-item-time">${startTime} - ${endTime}</div>
+    `;
+    
+    listItem.addEventListener('click', () => {
+      playVideo(index);
     });
     
-    playlistElement.appendChild(li);
+    playlistElement.appendChild(listItem);
   });
   
-  // 簡易的な要約を表示
-  const summaryElement = document.getElementById('summary');
-  if (currentPlaylist.length > 0) {
-    const level = document.getElementById('level-select').value;
-    const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
-    
-    summaryElement.textContent = `「${document.getElementById('theme-input').value}」に関連する${currentPlaylist.length}本の動画から${levelText}向けのセグメントを抽出しました。各動画の冒頭部分を再生します。`;
-  } else {
-    summaryElement.textContent = '';
-  }
+  // ナビゲーションボタンの状態を更新
+  updateNavigationButtons();
 }
 
-// 現在のセグメントを再生する関数
-function playCurrentSegment() {
-  if (currentPlaylist.length === 0 || currentIndex >= currentPlaylist.length) {
+// 動画を再生する関数
+function playVideo(index) {
+  if (index < 0 || index >= currentPlaylist.length) {
     return;
   }
   
-  const segment = currentPlaylist[currentIndex];
+  currentIndex = index;
+  const video = currentPlaylist[index];
+  const segment = video.currentSegment;
+  
+  // プレイリストのアクティブ項目を更新
+  const playlistItems = document.querySelectorAll('.playlist-item');
+  playlistItems.forEach(item => {
+    item.classList.remove('active');
+  });
+  
+  if (playlistItems[index]) {
+    playlistItems[index].classList.add('active');
+    playlistItems[index].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  
+  // 動画を再生
   player.loadVideoById({
-    videoId: segment.videoId,
+    videoId: video.id,
     startSeconds: segment.startTime,
     endSeconds: segment.endTime
   });
   
-  // 再生リストの現在の項目をハイライト
-  const items = document.querySelectorAll('.playlist-item');
-  items.forEach((item, index) => {
-    if (index === currentIndex) {
-      item.classList.add('current');
-    } else {
-      item.classList.remove('current');
+  // 要約と解説を表示
+  displaySummary(video);
+  
+  // ナビゲーションボタンの状態を更新
+  updateNavigationButtons();
+}
+
+// 前の動画を再生する関数
+function playPrevious() {
+  playVideo(currentIndex - 1);
+}
+
+// 次の動画を再生する関数
+function playNext() {
+  playVideo(currentIndex + 1);
+}
+
+// ナビゲーションボタンの状態を更新する関数
+function updateNavigationButtons() {
+  const prevButton = document.getElementById('prev-button');
+  const nextButton = document.getElementById('next-button');
+  
+  prevButton.disabled = currentIndex <= 0;
+  nextButton.disabled = currentIndex >= currentPlaylist.length - 1;
+}
+
+// 要約と解説を表示する関数
+function displaySummary(video) {
+  const summaryElement = document.getElementById('summary');
+  
+  if (video.analysis && video.analysis.summary) {
+    summaryElement.innerHTML = `
+      <h3>${video.snippet.title}</h3>
+      <p>${video.analysis.summary}</p>
+    `;
+  } else {
+    summaryElement.innerHTML = `
+      <h3>${video.snippet.title}</h3>
+      <p>${video.snippet.description}</p>
+    `;
+  }
+}
+
+// 関連トピックを表示する関数
+function displayRelatedTopics(videos) {
+  const relatedTopicsElement = document.getElementById('related-topics');
+  relatedTopicsElement.innerHTML = '';
+  
+  // 全ての動画から関連トピックを収集
+  const allTopics = new Set();
+  videos.forEach(video => {
+    if (video.analysis && video.analysis.relatedTopics) {
+      video.analysis.relatedTopics.forEach(topic => {
+        allTopics.add(topic);
+      });
     }
   });
-}
-
-// 次のセグメントを再生する関数
-function playNextSegment() {
-  if (currentIndex < currentPlaylist.length - 1) {
-    currentIndex++;
-    playCurrentSegment();
+  
+  // 関連トピックを表示
+  if (allTopics.size > 0) {
+    Array.from(allTopics).forEach(topic => {
+      const listItem = document.createElement('li');
+      listItem.textContent = topic;
+      listItem.addEventListener('click', () => {
+        document.getElementById('theme-input').value = topic;
+        searchVideos();
+      });
+      relatedTopicsElement.appendChild(listItem);
+    });
   } else {
-    // 全てのセグメントが再生終了
-    document.getElementById('summary').textContent += '\n\n全てのセグメントの再生が完了しました。';
+    relatedTopicsElement.innerHTML = '<div class="loading">関連トピックがありません</div>';
   }
 }
 
-// エンターキーでの検索を有効化
-document.getElementById('theme-input').addEventListener('keypress', function(event) {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    searchVideos();
-  }
+// 秒数を MM:SS 形式にフォーマットする関数
+function formatTime(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+}
+
+// ページ読み込み時の初期化
+document.addEventListener('DOMContentLoaded', () => {
+  // 検索ボタンのイベントリスナー（プレーヤーが準備できる前に設定）
+  document.getElementById('search-button').addEventListener('click', searchVideos);
+  
+  // Enterキーでの検索
+  document.getElementById('theme-input').addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') {
+      searchVideos();
+    }
+  });
 });
