@@ -245,3 +245,61 @@ document.getElementById('theme-input').addEventListener('keypress', function(eve
     searchVideos();
   }
 });
+
+
+// 動画の難易度を評価する関数
+function evaluateVideoLevel(video, level) {
+  if (!video || !video.snippet) return 0;
+  
+  const title = video.snippet.title || '';
+  const description = video.snippet.description || '';
+  const content = title + ' ' + description;
+  
+  // 初心者向けの単語
+  const beginnerTerms = ['入門', '基礎', '初心者', '簡単', 'わかりやすい', '基本', '初級', 'はじめて'];
+  
+  // 中級者向けの単語
+  const intermediateTerms = ['実践', '応用', 'テクニック', 'ノウハウ', '中級', '効率的', '改善'];
+  
+  // 上級者向けの単語
+  const expertTerms = ['高度', '専門', '詳細', '上級', '最新', '研究', '最適化', '先端', '理論'];
+  
+  let score = 0.5; // デフォルトは中間
+  
+  // 単語の出現に基づいてスコアを調整
+  beginnerTerms.forEach(term => {
+    if (content.includes(term)) score -= 0.1;
+  });
+  
+  intermediateTerms.forEach(term => {
+    if (content.includes(term)) score += 0.05;
+  });
+  
+  expertTerms.forEach(term => {
+    if (content.includes(term)) score += 0.1;
+  });
+  
+  // 0.1から0.9の範囲に収める
+  score = Math.max(0.1, Math.min(0.9, score));
+  
+  // レベルに応じた適合度を計算
+  let levelFit = 0;
+  
+  if (level === 'beginner') {
+    levelFit = 1 - score; // スコアが低いほど初心者向け
+  } else if (level === 'intermediate') {
+    levelFit = 1 - Math.abs(score - 0.5) * 2; // 中間に近いほど中級者向け
+  } else if (level === 'expert') {
+    levelFit = score; // スコアが高いほど専門家向け
+  }
+  
+  return levelFit;
+}
+
+// 検索結果をレベルでフィルタリングする関数
+function filterVideosByLevel(videos, level, minFit = 0.6) {
+  return videos.filter(video => {
+    const levelFit = evaluateVideoLevel(video, level);
+    return levelFit >= minFit;
+  });
+}
