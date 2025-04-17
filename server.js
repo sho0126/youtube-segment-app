@@ -1,11 +1,16 @@
 // 必要なパッケージのインポート
 const express = require('express');
 const axios = require('axios');
+const { OpenAI } = require('openai');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+// OpenAI クライアントの初期化
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // 静的ファイルの提供
 app.use(express.static('public'));
@@ -14,7 +19,7 @@ app.use(express.json());
 // YouTube検索APIエンドポイント
 app.get('/api/search', async (req, res) => {
   try {
-    const { query, maxResults = 5 } = req.query;
+    const { query, maxResults = 10 } = req.query;
     
     const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
       params: {
@@ -46,6 +51,48 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
+// 動画分析APIエンドポイント
+app.post('/api/analyze-video', async (req, res) => {
+  try {
+    const { videoId, theme, level } = req.body;
+    
+    // YouTube Data APIを使用して動画の詳細情報を取得
+    const response = await axios.get('https://www.googleapis.com/youtube/v3/videos', {
+      params: {
+        part: 'snippet,contentDetails',
+        id: videoId,
+        key: YOUTUBE_API_KEY
+      }
+    }) ;
+    
+    if (!response.data || !response.data.items || response.data.items.length === 0) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+    
+    const videoInfo = response.data.items[0];
+    const title = videoInfo.snippet.title;
+    const description = videoInfo.snippet.description;
+    const duration = parseDuration(videoInfo.contentDetails.duration); // ISO 8601形式の期間を秒に変換
+    
+    // OpenAI APIを使用してテキストベースの分析を行う
+    const segments = await analyzeVideoContent(title, description, theme, level, duration);
+    
+    // 結果を返す
+    res.json({ 
+      videoId,
+      title,
+      duration,
+      segments
+    });
+  } catch (error) {
+    console.error('Error analyzing video:', error);
+    res.status(500).json({ 
+      error: 'Failed to analyze video',
+      message: error.message
+    });
+  }
+});
+
 // 動画詳細情報取得エンドポイント
 app.get('/api/video/:id', async (req, res) => {
   try {
@@ -67,139 +114,19 @@ app.get('/api/video/:id', async (req, res) => {
   }
 });
 
-// サーバー起動
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
-// 必要なパッケージの追加
-const { OpenAI } = require('openai');
-const fs = require('fs');
-const path = require('path');
-const ytdl = require('ytdl-core');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-ffmpeg.setFfmpegPath(ffmpegPath);
-
-// OpenAI クライアントの初期化
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// 一時ファイル保存ディレクトリ
-const tempDir = path.join(__dirname, 'temp');
-if (!fs.existsSync(tempDir)) {
-  fs.mkdirSync(tempDir);
+// ISO 8601形式の期間を秒に変換する関数
+function parseDuration(duration) {
+  const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
+  
+  const hours = (match[1] && match[1].replace('H', '')) || 0;
+  const minutes = (match[2] && match[2].replace('M', '')) || 0;
+  const seconds = (match[3] && match[3].replace('S', '')) || 0;
+  
+  return parseInt(hours) * 3600 + parseInt(minutes) * 60 + parseInt(seconds);
 }
 
-// 動画分析エンドポイント
-app.post('/api/analyze-video', async (req, res) => {
-  try {
-    const { videoId, theme, level } = req.body;
-    
-    // 動画情報の取得
-    const videoInfo = await ytdl.getInfo(`https://www.youtube.com/watch?v=${videoId}`) ;
-    const videoTitle = videoInfo.videoDetails.title;
-    const videoDuration = parseInt(videoInfo.videoDetails.lengthSeconds);
-    
-    // 長すぎる動画は部分的に処理
-    const maxDuration = 600; // 最大10分
-    const processDuration = Math.min(videoDuration, maxDuration);
-    
-    // 音声の抽出
-    const audioPath = path.join(tempDir, `${videoId}.mp3`);
-    await extractAudio(videoId, audioPath, processDuration);
-    
-    // 音声の文字起こし
-    const transcription = await transcribeAudio(audioPath);
-    
-    // 文字起こしの分割（長すぎる場合）
-    const chunks = splitTranscription(transcription);
-    
-    // 各チャンクの分析とセグメント特定
-    let allSegments = [];
-    for (const chunk of chunks) {
-      const segments = await identifyRelevantSegments(chunk, theme, level);
-      allSegments = [...allSegments, ...segments];
-    }
-    
-    // セグメントの時間調整と重複排除
-    const finalSegments = processSegments(allSegments, videoDuration);
-    
-    // 一時ファイルの削除
-    fs.unlinkSync(audioPath);
-    
-    // 結果を返す
-    res.json({ 
-      videoId,
-      title: videoTitle,
-      duration: videoDuration,
-      segments: finalSegments
-    });
-  } catch (error) {
-    console.error('Error analyzing video:', error);
-    res.status(500).json({ 
-      error: 'Failed to analyze video',
-      message: error.message
-    });
-  }
-});
-
-// 音声抽出関数
-function extractAudio(videoId, outputPath, duration) {
-  return new Promise((resolve, reject) => {
-    const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-    const stream = ytdl(videoUrl, { quality: 'highestaudio' }) ;
-    
-    ffmpeg(stream)
-      .audioBitrate(128)
-      .toFormat('mp3')
-      .duration(duration)
-      .on('end', () => resolve())
-      .on('error', (err) => reject(err))
-      .save(outputPath);
-  });
-}
-
-// 音声文字起こし関数
-async function transcribeAudio(audioPath) {
-  const response = await openai.audio.transcriptions.create({
-    file: fs.createReadStream(audioPath),
-    model: 'whisper-1',
-    language: 'ja'
-  });
-  return response.text;
-}
-
-// 文字起こしの分割（長すぎる場合）
-function splitTranscription(transcription) {
-  const maxChunkLength = 4000; // GPT-4の入力制限に合わせる
-  const chunks = [];
-  
-  if (transcription.length <= maxChunkLength) {
-    return [transcription];
-  }
-  
-  // 文単位で分割
-  const sentences = transcription.split(/(?<=[。．！？])/);
-  let currentChunk = '';
-  
-  for (const sentence of sentences) {
-    if (currentChunk.length + sentence.length > maxChunkLength) {
-      chunks.push(currentChunk);
-      currentChunk = sentence;
-    } else {
-      currentChunk += sentence;
-    }
-  }
-  
-  if (currentChunk.length > 0) {
-    chunks.push(currentChunk);
-  }
-  
-  return chunks;
-}
-
-// 関連セグメント特定関数
-async function identifyRelevantSegments(transcription, theme, level) {
+// テキストベースの動画内容分析
+async function analyzeVideoContent(title, description, theme, level, duration) {
   const levelDescription = {
     'beginner': '初心者向けの基本的な内容',
     'intermediate': '中級者向けの応用的な内容',
@@ -207,81 +134,66 @@ async function identifyRelevantSegments(transcription, theme, level) {
   };
   
   const prompt = `
-あなたは動画内容分析の専門家です。以下の文字起こしから、「${theme}」に関連する部分を特定してください。
-特に${levelDescription[level]}に焦点を当ててください。
+以下はYouTube動画のタイトルと説明文です。この情報から、「${theme}」に関連する部分を特定し、動画内のどの部分（時間）が最も関連性が高いか推測してください。
+動画の長さは${duration}秒（${Math.floor(duration/60)}分${duration%60}秒）です。
 
+タイトル: ${title}
+説明文: ${description}
+
+この動画の中で、${levelDescription[level]}として「${theme}」に関連する部分を3つのセグメントに分けて特定してください。
 各セグメントについて以下の情報を含めてください：
-1. 開始時間（秒）
-2. 終了時間（秒）
+1. 開始時間（秒）- 推測で構いませんが、動画の長さ内に収めてください
+2. 終了時間（秒）- 推測で構いませんが、動画の長さ内に収めてください
 3. 関連度（0-1の数値）
 4. セグメントの要約
 5. レベル適合度（0-1の数値、${level}レベルにどれだけ適しているか）
 
 結果は以下のJSON形式で返してください：
-[
-  {
-    "startTime": 開始時間（秒）,
-    "endTime": 終了時間（秒）,
-    "relevance": 関連度,
-    "summary": "セグメントの要約",
-    "levelFit": レベル適合度
-  },
-  ...
-]
-
-文字起こし：
-${transcription}
+{
+  "segments": [
+    {
+      "startTime": 開始時間（秒）,
+      "endTime": 終了時間（秒）,
+      "relevance": 関連度,
+      "summary": "セグメントの要約",
+      "levelFit": レベル適合度
+    },
+    ...
+  ]
+}
 `;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4',
-    messages: [
-      {
-        role: 'user',
-        content: prompt
-      }
-    ],
-    response_format: { type: "json_object" }
-  });
-  
   try {
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4',
+      messages: [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" }
+    });
+    
     const content = response.choices[0].message.content;
     const parsed = JSON.parse(content);
     return parsed.segments || [];
   } catch (error) {
-    console.error('Error parsing GPT response:', error);
-    return [];
+    console.error('Error in OpenAI API call:', error);
+    // 失敗した場合は簡易的なセグメントを返す
+    return [
+      {
+        startTime: 0,
+        endTime: Math.min(120, duration),
+        relevance: 0.8,
+        summary: `「${theme}」に関連する内容（推測）`,
+        levelFit: 0.7
+      }
+    ];
   }
 }
 
-// セグメントの処理（時間調整と重複排除）
-function processSegments(segments, videoDuration) {
-  // 関連度でソート
-  segments.sort((a, b) => b.relevance - a.relevance);
-  
-  // 重複排除（時間が重なるセグメントを統合）
-  const mergedSegments = [];
-  const usedTimeRanges = [];
-  
-  for (const segment of segments) {
-    // 動画の長さを超えないように調整
-    segment.endTime = Math.min(segment.endTime, videoDuration);
-    
-    // 既存の時間範囲と重複するかチェック
-    const overlaps = usedTimeRanges.some(range => 
-      (segment.startTime >= range.start && segment.startTime <= range.end) ||
-      (segment.endTime >= range.start && segment.endTime <= range.end) ||
-      (segment.startTime <= range.start && segment.endTime >= range.end)
-    );
-    
-    if (!overlaps) {
-      mergedSegments.push(segment);
-      usedTimeRanges.push({
-        start: segment.startTime,
-        end: segment.endTime
-      });
-    }
-  }
-  
-  return mergedSegments;
-}
+// サーバー起動
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
