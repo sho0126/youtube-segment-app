@@ -296,3 +296,37 @@ function generatePlaylist(videos, totalDurationInSeconds) {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+
+
+// OAuth認証ルートの追加
+app.get('/auth', (req, res) => {
+  const authUrl = `https://accounts.google.com/o/oauth2/auth?client_id=${process.env.YOUTUBE_CLIENT_ID}&redirect_uri=${encodeURIComponent(process.env.REDIRECT_URI) }&scope=https://www.googleapis.com/auth/youtube.force-ssl&response_type=code&access_type=offline&prompt=consent`;
+  res.redirect(authUrl) ;
+});
+
+// コールバックルートの追加
+app.get('/auth/callback', async (req, res) => {
+  const { code } = req.query;
+  
+  try {
+    // 認証コードをアクセストークンに交換
+    const response = await axios.post('https://oauth2.googleapis.com/token', {
+      code,
+      client_id: process.env.YOUTUBE_CLIENT_ID,
+      client_secret: process.env.YOUTUBE_CLIENT_SECRET,
+      redirect_uri: process.env.REDIRECT_URI,
+      grant_type: 'authorization_code'
+    }) ;
+    
+    // トークンを環境変数に保存
+    process.env.YOUTUBE_ACCESS_TOKEN = response.data.access_token;
+    process.env.YOUTUBE_REFRESH_TOKEN = response.data.refresh_token;
+    
+    // 成功ページにリダイレクト
+    res.redirect('/auth-success.html');
+  } catch (error) {
+    console.error('Error exchanging code for tokens:', error);
+    res.status(500).send('認証エラーが発生しました');
+  }
+});
