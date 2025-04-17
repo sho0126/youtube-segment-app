@@ -13,30 +13,43 @@
     <div class="search-container">
       <input type="text" id="theme-input" placeholder="テーマを入力してください">
       <select id="level-select">
-        <option value="beginner">ビギナー</option>
-        <option value="intermediate">中級者</option>
-        <option value="expert">専門レベル</option>
+        <option value="ビギナー">ビギナー</option>
+        <option value="中級者">中級者</option>
+        <option value="専門レベル">専門レベル</option>
       </select>
       <select id="duration-select">
-        <option value="30">30分</option>
-        <option value="60">1時間</option>
-        <option value="120">2時間</option>
+        <option value="30分">30分</option>
+        <option value="1時間">1時間</option>
+        <option value="2時間">2時間</option>
       </select>
       <button id="search-button">検索</button>
     </div>
     
-    <div id="player-container">
-      <div id="player"></div>
+    <div class="content-container">
+      <div class="player-container">
+        <div id="player"></div>
+        <div class="player-controls">
+          <button id="prev-button" disabled>前へ</button>
+          <button id="next-button" disabled>次へ</button>
+        </div>
+      </div>
+      
+      <div class="playlist-container">
+        <h2>再生リスト</h2>
+        <ul id="playlist"></ul>
+      </div>
     </div>
     
-    <div id="playlist-container">
-      <h2>再生リスト</h2>
-      <ul id="playlist"></ul>
-    </div>
-    
-    <div id="summary-container">
-      <h2>要約と解説</h2>
-      <div id="summary"></div>
+    <div class="info-container">
+      <div class="summary-container">
+        <h2>要約と解説</h2>
+        <div id="summary"></div>
+      </div>
+      
+      <div class="related-topics-container">
+        <h2>関連するテーマ</h2>
+        <ul id="related-topics"></ul>
+      </div>
     </div>
   </div>
   
