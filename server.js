@@ -148,7 +148,7 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
 説明文: ${description}
 
 この動画の中で、${levelDescription[level]}として「${theme}」に関連する部分を3つのセグメントに分けて特定してください。
-各セグメントは異なる時間帯にしてください。
+各セグメントは異なる時間帯にしてください。重複するセグメントは避けてください。
 
 各セグメントについて以下の情報を含めてください：
 1. 開始時間（秒）- 動画の長さ内に収めてください
@@ -156,6 +156,13 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
 3. 関連度（0-1の数値）- ${level}レベルでの「${theme}」との関連性
 4. セグメントの要約 - 推測される内容の簡潔な説明
 5. レベル適合度（0-1の数値）- ${level}レベルにどれだけ適しているか
+
+重要な制約:
+- 各セグメントは少なくとも30秒以上の長さにしてください
+- 各セグメントの時間は互いに重複しないようにしてください
+- 開始時間と終了時間は動画の長さ（${duration}秒）以内にしてください
+- 難易度「${level}」に合わせた分析を行ってください
+- 関連度が0.7未満のセグメントは含めないでください
 
 結果は以下のJSON形式で返してください（必ずJSON形式を守ってください）：
 {
@@ -170,9 +177,6 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
     ...
   ]
 }
-
-重要: 各セグメントの時間は重複せず、開始時間と終了時間は動画の長さ（${duration}秒）以内にしてください。
-また、難易度「${level}」に合わせた分析を行ってください。
 `;
 
   try {
@@ -223,8 +227,26 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
           };
         });
         
+        // 重複するセグメントを除去
+        const nonOverlappingSegments = [];
+        validSegments.sort((a, b) => a.startTime - b.startTime); // 開始時間でソート
+        
+        for (const segment of validSegments) {
+          // 既存のセグメントと重複しないか確認
+          const overlaps = nonOverlappingSegments.some(existing => 
+            (segment.startTime >= existing.startTime && segment.startTime < existing.endTime) ||
+            (segment.endTime > existing.startTime && segment.endTime <= existing.endTime) ||
+            (segment.startTime <= existing.startTime && segment.endTime >= existing.endTime)
+          );
+          
+          // 重複しない場合のみ追加
+          if (!overlaps) {
+            nonOverlappingSegments.push(segment);
+          }
+        }
+        
         // レベルに応じて適合度を調整
-        return validSegments.map(segment => {
+        return nonOverlappingSegments.map(segment => {
           let adjustedLevelFit = segment.levelFit;
           
           // レベルに応じた調整
