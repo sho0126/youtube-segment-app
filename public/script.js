@@ -4,7 +4,7 @@ let currentPlaylist = [];
 let currentIndex = 0;
 
 // YouTube IFrame Player APIの準備
-function onYouTubeIframeAPIReady()  {
+function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
     height: '360',
     width: '640',
@@ -54,14 +54,15 @@ async function searchVideos() {
     
     document.getElementById('summary').textContent = '検索中...';
     
-    // APIリクエスト
-    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&maxResults=5`);
+    // APIリクエスト（より多くの結果を取得）
+    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&maxResults=10`);
     const data = await response.json();
     
     // 検索結果から再生リストを作成
-    // data.itemsが存在するか確認
     if (data && data.items && Array.isArray(data.items)) {
-      createPlaylist(data.items, theme);
+      // 指定された時間に合わせて再生リストを作成
+      const targetDurationSeconds = parseInt(duration) * 60;
+      await createPlaylistWithDuration(data.items, theme, level, targetDurationSeconds);
     } else {
       console.error('Invalid response format:', data);
       alert('検索結果のフォーマットが無効です');
@@ -78,45 +79,168 @@ async function searchVideos() {
     document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
     
     // エラー時もローディング表示を非表示
-    const loadingElement = document.getElementById('loading');
     if (loadingElement) {
       loadingElement.style.display = 'none';
     }
   }
 }
 
-// 再生リストを作成する関数
-function createPlaylist(videos, theme) {
+// 動画のレベル適合度を評価する関数
+function evaluateVideoLevel(video, level) {
+  if (!video || !video.snippet) return 0;
+  
+  const title = video.snippet.title || '';
+  const description = video.snippet.description || '';
+  const content = title + ' ' + description;
+  
+  // 初心者向けの単語
+  const beginnerTerms = ['入門', '基礎', '初心者', '簡単', 'わかりやすい', '基本', '初級', 'はじめて'];
+  
+  // 中級者向けの単語
+  const intermediateTerms = ['実践', '応用', 'テクニック', 'ノウハウ', '中級', '効率的', '改善'];
+  
+  // 上級者向けの単語
+  const expertTerms = ['高度', '専門', '詳細', '上級', '最新', '研究', '最適化', '先端', '理論'];
+  
+  let score = 0.5; // デフォルトは中間
+  
+  // 単語の出現に基づいてスコアを調整
+  beginnerTerms.forEach(term => {
+    if (content.includes(term)) score -= 0.1;
+  });
+  
+  intermediateTerms.forEach(term => {
+    if (content.includes(term)) score += 0.05;
+  });
+  
+  expertTerms.forEach(term => {
+    if (content.includes(term)) score += 0.1;
+  });
+  
+  // 0.1から0.9の範囲に収める
+  score = Math.max(0.1, Math.min(0.9, score));
+  
+  // レベルに応じた適合度を計算
+  let levelFit = 0;
+  
+  if (level === 'beginner') {
+    levelFit = 1 - score; // スコアが低いほど初心者向け
+  } else if (level === 'intermediate') {
+    levelFit = 1 - Math.abs(score - 0.5) * 2; // 中間に近いほど中級者向け
+  } else if (level === 'expert') {
+    levelFit = score; // スコアが高いほど専門家向け
+  }
+  
+  return levelFit;
+}
+
+// 再生リスト作成関数
+async function createPlaylistWithDuration(videos, theme, level, targetDurationSeconds) {
   currentPlaylist = [];
   currentIndex = 0;
   
-  // 各動画から簡易的なセグメントを作成
-  videos.forEach(video => {
-    // videoとvideo.idが存在するか確認
-    if (!video || !video.id || !video.id.videoId) {
-      console.warn('Invalid video object:', video);
-      return; // この動画をスキップ
-    }
+  // テーマに関連する動画を選別（簡易的なフィルタリング）
+  const filteredVideos = videos.filter(video => {
+    if (!video || !video.id || !video.id.videoId || !video.snippet) return false;
     
-    const videoId = video.id.videoId;
-    const title = video.snippet ? video.snippet.title : 'タイトルなし';
-    const description = video.snippet ? video.snippet.description : '';
+    const title = video.snippet.title;
+    const description = video.snippet.description || '';
     
-    // テーマとの関連性を簡易的に判断（実際はもっと複雑なロジックが必要）
-    const isRelevant = title.toLowerCase().includes(theme.toLowerCase()) || 
-                       description.toLowerCase().includes(theme.toLowerCase());
-    
-    if (isRelevant) {
-      // 簡易的なセグメント（最初の2分間）
-      currentPlaylist.push({
-        videoId,
-        title,
-        startTime: 0,
-        endTime: 120, // 2分間
-        description
-      });
-    }
+    // テーマとの関連性を簡易的に判断
+    return title.toLowerCase().includes(theme.toLowerCase()) || 
+           description.toLowerCase().includes(theme.toLowerCase());
   });
+  
+  if (filteredVideos.length === 0) {
+    alert('関連する動画が見つかりませんでした');
+    document.getElementById('summary').textContent = '関連する動画が見つかりませんでした。別のテーマで試してみてください。';
+    return;
+  }
+  
+  // レベルに基づいて動画をソート
+  filteredVideos.sort((a, b) => {
+    const levelFitA = evaluateVideoLevel(a, level);
+    const levelFitB = evaluateVideoLevel(b, level);
+    return levelFitB - levelFitA; // レベル適合度の高い順
+  });
+  
+  // ローディング表示
+  document.getElementById('summary').textContent = '動画を分析中...これには数分かかる場合があります。';
+  
+  let totalDuration = 0;
+  let analyzedVideos = 0;
+  
+  // 各動画を分析し、関連セグメントを抽出
+  for (const video of filteredVideos) {
+    // 目標時間に達したら終了
+    if (totalDuration >= targetDurationSeconds) break;
+    
+    try {
+      const videoId = video.id.videoId;
+      
+      // 進捗状況を更新
+      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${Math.min(filteredVideos.length, 10)}の動画を処理しています。`;
+      
+      // 動画分析APIを呼び出し
+      const response = await fetch('/api/analyze-video', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          videoId,
+          theme,
+          level
+        })
+      });
+      
+      const data = await response.json();
+      
+      // 分析に失敗した場合はスキップ
+      if (!data || !data.segments || data.segments.length === 0) {
+        analyzedVideos++;
+        continue;
+      }
+      
+      // 関連度でセグメントをソート
+      data.segments.sort((a, b) => b.relevance - a.relevance);
+      
+      // 最も関連度の高いセグメントを追加
+      for (const segment of data.segments) {
+        const segmentDuration = segment.endTime - segment.startTime;
+        
+        // 目標時間を超える場合はスキップ
+        if (totalDuration + segmentDuration > targetDurationSeconds) {
+          continue;
+        }
+        
+        // 再生リストに追加
+        currentPlaylist.push({
+          videoId,
+          title: video.snippet.title,
+          startTime: segment.startTime,
+          endTime: segment.endTime,
+          description: segment.summary,
+          relevance: segment.relevance,
+          levelFit: segment.levelFit
+        });
+        
+        totalDuration += segmentDuration;
+        
+        // 目標時間に達したら終了
+        if (totalDuration >= targetDurationSeconds) break;
+      }
+      
+      analyzedVideos++;
+      
+    } catch (error) {
+      console.error('Error analyzing video:', error);
+      analyzedVideos++;
+    }
+    
+    // 最大10本の動画まで分析
+    if (analyzedVideos >= 10) break;
+  }
   
   // 再生リストを表示
   displayPlaylist();
@@ -128,8 +252,8 @@ function createPlaylist(videos, theme) {
   if (currentPlaylist.length > 0) {
     playCurrentSegment();
   } else {
-    alert('関連する動画が見つかりませんでした');
-    document.getElementById('summary').textContent = '関連する動画が見つかりませんでした。別のテーマで試してみてください。';
+    alert('関連するセグメントが見つかりませんでした');
+    document.getElementById('summary').textContent = '関連するセグメントが見つかりませんでした。別のテーマで試してみてください。';
   }
 }
 
@@ -140,7 +264,26 @@ function displayPlaylist() {
   
   currentPlaylist.forEach((segment, index) => {
     const li = document.createElement('li');
-    li.textContent = `${segment.title} (0:00 - ${Math.floor(segment.endTime / 60)}:${segment.endTime % 60 < 10 ? '0' + segment.endTime % 60 : segment.endTime % 60})`;
+    
+    // 開始・終了時間のフォーマット
+    const startMin = Math.floor(segment.startTime / 60);
+    const startSec = segment.startTime % 60;
+    const endMin = Math.floor(segment.endTime / 60);
+    const endSec = segment.endTime % 60;
+    
+    const timeText = `${startMin}:${startSec < 10 ? '0' + startSec : startSec} - ${endMin}:${endSec < 10 ? '0' + endSec : endSec}`;
+    
+    // 関連度と適合度の表示
+    const relevanceText = segment.relevance ? `関連度: ${Math.round(segment.relevance * 100)}%` : '';
+    const levelFitText = segment.levelFit ? `適合度: ${Math.round(segment.levelFit * 100)}%` : '';
+    
+    li.innerHTML = `
+      <div class="playlist-item-title">${segment.title}</div>
+      <div class="playlist-item-time">${timeText}</div>
+      <div class="playlist-item-meta">${relevanceText} ${levelFitText}</div>
+      <div class="playlist-item-desc">${segment.description}</div>
+    `;
+    
     li.classList.add('playlist-item');
     if (index === currentIndex) {
       li.classList.add('current');
@@ -159,8 +302,18 @@ function displayPlaylist() {
   if (currentPlaylist.length > 0) {
     const level = document.getElementById('level-select').value;
     const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
+    const duration = document.getElementById('duration-select').value;
     
-    summaryElement.textContent = `「${document.getElementById('theme-input').value}」に関連する${currentPlaylist.length}本の動画から${levelText}向けのセグメントを抽出しました。各動画の冒頭部分を再生します。`;
+    // 実際の再生リスト時間を計算
+    let totalDuration = 0;
+    currentPlaylist.forEach(segment => {
+      totalDuration += (segment.endTime - segment.startTime);
+    });
+    
+    const totalMin = Math.floor(totalDuration / 60);
+    const totalSec = Math.round(totalDuration % 60);
+    
+    summaryElement.textContent = `「${document.getElementById('theme-input').value}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。総再生時間: ${totalMin}分${totalSec}秒`;
   } else {
     summaryElement.textContent = '';
   }
@@ -245,285 +398,3 @@ document.getElementById('theme-input').addEventListener('keypress', function(eve
     searchVideos();
   }
 });
-
-
-// 動画の難易度を評価する関数
-function evaluateVideoLevel(video, level) {
-  if (!video || !video.snippet) return 0;
-  
-  const title = video.snippet.title || '';
-  const description = video.snippet.description || '';
-  const content = title + ' ' + description;
-  
-  // 初心者向けの単語
-  const beginnerTerms = ['入門', '基礎', '初心者', '簡単', 'わかりやすい', '基本', '初級', 'はじめて'];
-  
-  // 中級者向けの単語
-  const intermediateTerms = ['実践', '応用', 'テクニック', 'ノウハウ', '中級', '効率的', '改善'];
-  
-  // 上級者向けの単語
-  const expertTerms = ['高度', '専門', '詳細', '上級', '最新', '研究', '最適化', '先端', '理論'];
-  
-  let score = 0.5; // デフォルトは中間
-  
-  // 単語の出現に基づいてスコアを調整
-  beginnerTerms.forEach(term => {
-    if (content.includes(term)) score -= 0.1;
-  });
-  
-  intermediateTerms.forEach(term => {
-    if (content.includes(term)) score += 0.05;
-  });
-  
-  expertTerms.forEach(term => {
-    if (content.includes(term)) score += 0.1;
-  });
-  
-  // 0.1から0.9の範囲に収める
-  score = Math.max(0.1, Math.min(0.9, score));
-  
-  // レベルに応じた適合度を計算
-  let levelFit = 0;
-  
-  if (level === 'beginner') {
-    levelFit = 1 - score; // スコアが低いほど初心者向け
-  } else if (level === 'intermediate') {
-    levelFit = 1 - Math.abs(score - 0.5) * 2; // 中間に近いほど中級者向け
-  } else if (level === 'expert') {
-    levelFit = score; // スコアが高いほど専門家向け
-  }
-  
-  return levelFit;
-}
-
-// 検索結果をレベルでフィルタリングする関数
-function filterVideosByLevel(videos, level, minFit = 0.6) {
-  return videos.filter(video => {
-    const levelFit = evaluateVideoLevel(video, level);
-    return levelFit >= minFit;
-  });
-}
-
-
-// 指定時間に合わせた再生リスト作成関数
-async function createPlaylistWithDuration(videos, theme, level, targetDurationSeconds) {
-  currentPlaylist = [];
-  currentIndex = 0;
-  
-  // レベルに合った動画をフィルタリング
-  const filteredVideos = filterVideosByLevel(videos, level);
-  
-  if (filteredVideos.length === 0) {
-    alert('選択したレベルに合う動画が見つかりませんでした');
-    document.getElementById('summary').textContent = '選択したレベルに合う動画が見つかりませんでした。別のテーマまたはレベルで試してみてください。';
-    return;
-  }
-  
-  // ローディング表示
-  document.getElementById('summary').textContent = '動画を分析中...これには数分かかる場合があります。';
-  
-  let totalDuration = 0;
-  let analyzedVideos = 0;
-  
-  // 各動画を分析し、関連セグメントを抽出
-  for (const video of filteredVideos) {
-    // 目標時間に達したら終了
-    if (totalDuration >= targetDurationSeconds) break;
-    
-    try {
-      const videoId = video.id.videoId;
-      
-      // 動画分析APIを呼び出し
-      const response = await fetch('/api/analyze-video', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          videoId,
-          theme,
-          level
-        })
-      });
-      
-      const data = await response.json();
-      
-      // 分析に失敗した場合はスキップ
-      if (!data || !data.segments || data.segments.length === 0) {
-        analyzedVideos++;
-        continue;
-      }
-      
-      // 関連度とレベル適合度でセグメントをソート
-      data.segments.sort((a, b) => {
-        const scoreA = a.relevance * a.levelFit;
-        const scoreB = b.relevance * b.levelFit;
-        return scoreB - scoreA;
-      });
-      
-      // 最も関連度の高いセグメントを追加
-      for (const segment of data.segments) {
-        const segmentDuration = segment.endTime - segment.startTime;
-        
-        // 目標時間を超える場合はスキップ
-        if (totalDuration + segmentDuration > targetDurationSeconds) {
-          continue;
-        }
-        
-        // 再生リストに追加
-        currentPlaylist.push({
-          videoId,
-          title: video.snippet.title,
-          startTime: segment.startTime,
-          endTime: segment.endTime,
-          description: segment.summary,
-          relevance: segment.relevance,
-          levelFit: segment.levelFit
-        });
-        
-        totalDuration += segmentDuration;
-        
-        // 目標時間に達したら終了
-        if (totalDuration >= targetDurationSeconds) break;
-      }
-      
-      analyzedVideos++;
-      
-      // 進捗状況を更新
-      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos}/${Math.min(filteredVideos.length, 10)}の動画を処理しました。`;
-      
-    } catch (error) {
-      console.error('Error analyzing video:', error);
-      analyzedVideos++;
-    }
-    
-    // 最大10本の動画まで分析
-    if (analyzedVideos >= 10) break;
-  }
-  
-  // 再生リストを表示
-  displayPlaylist();
-  
-  // 関連テーマを表示
-  displayRelatedThemes(theme);
-  
-  // 最初のセグメントを再生
-  if (currentPlaylist.length > 0) {
-    playCurrentSegment();
-  } else {
-    alert('関連するセグメントが見つかりませんでした');
-    document.getElementById('summary').textContent = '関連するセグメントが見つかりませんでした。別のテーマで試してみてください。';
-  }
-}
-
-// 再生リスト表示関数の更新
-function displayPlaylist() {
-  const playlistElement = document.getElementById('playlist');
-  playlistElement.innerHTML = '';
-  
-  currentPlaylist.forEach((segment, index) => {
-    const li = document.createElement('li');
-    
-    // 開始・終了時間のフォーマット
-    const startMin = Math.floor(segment.startTime / 60);
-    const startSec = segment.startTime % 60;
-    const endMin = Math.floor(segment.endTime / 60);
-    const endSec = segment.endTime % 60;
-    
-    const timeText = `${startMin}:${startSec < 10 ? '0' + startSec : startSec} - ${endMin}:${endSec < 10 ? '0' + endSec : endSec}`;
-    
-    // 関連度と適合度の表示
-    const relevanceText = segment.relevance ? `関連度: ${Math.round(segment.relevance * 100)}%` : '';
-    const levelFitText = segment.levelFit ? `適合度: ${Math.round(segment.levelFit * 100)}%` : '';
-    
-    li.innerHTML = `
-      <div class="playlist-item-title">${segment.title}</div>
-      <div class="playlist-item-time">${timeText}</div>
-      <div class="playlist-item-meta">${relevanceText} ${levelFitText}</div>
-    `;
-    
-    li.classList.add('playlist-item');
-    if (index === currentIndex) {
-      li.classList.add('current');
-    }
-    
-    li.addEventListener('click', () => {
-      currentIndex = index;
-      playCurrentSegment();
-    });
-    
-    playlistElement.appendChild(li);
-  });
-  
-  // 簡易的な要約を表示
-  const summaryElement = document.getElementById('summary');
-  if (currentPlaylist.length > 0) {
-    const level = document.getElementById('level-select').value;
-    const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
-    const duration = document.getElementById('duration-select').value;
-    
-    // 実際の再生リスト時間を計算
-    let totalDuration = 0;
-    currentPlaylist.forEach(segment => {
-      totalDuration += (segment.endTime - segment.startTime);
-    });
-    
-    const totalMin = Math.floor(totalDuration / 60);
-    const totalSec = Math.round(totalDuration % 60);
-    
-    summaryElement.textContent = `「${document.getElementById('theme-input').value}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。総再生時間: ${totalMin}分${totalSec}秒`;
-  } else {
-    summaryElement.textContent = '';
-  }
-}
-
-// 検索関数の更新
-async function searchVideos() {
-  const theme = document.getElementById('theme-input').value;
-  const level = document.getElementById('level-select').value;
-  const duration = document.getElementById('duration-select').value;
-  
-  if (!theme) {
-    alert('テーマを入力してください');
-    return;
-  }
-  
-  try {
-    // 検索中の表示
-    const loadingElement = document.getElementById('loading');
-    if (loadingElement) {
-      loadingElement.style.display = 'block';
-    }
-    
-    document.getElementById('summary').textContent = '検索中...';
-    
-    // APIリクエスト（より多くの結果を取得）
-    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&maxResults=20`);
-    const data = await response.json();
-    
-    // 検索結果から再生リストを作成
-    if (data && data.items && Array.isArray(data.items)) {
-      // 指定された時間に合わせて再生リストを作成
-      const targetDurationSeconds = parseInt(duration) * 60;
-      await createPlaylistWithDuration(data.items, theme, level, targetDurationSeconds);
-    } else {
-      console.error('Invalid response format:', data);
-      alert('検索結果のフォーマットが無効です');
-      document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
-    }
-    
-    // 検索完了後、ローディング表示を非表示
-    if (loadingElement) {
-      loadingElement.style.display = 'none';
-    }
-  } catch (error) {
-    console.error('Error searching videos:', error);
-    alert('動画の検索中にエラーが発生しました: ' + error.message);
-    document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
-    
-    // エラー時もローディング表示を非表示
-    if (loadingElement) {
-      loadingElement.style.display = 'none';
-    }
-  }
-}
