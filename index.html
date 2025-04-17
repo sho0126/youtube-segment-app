@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YouTube テーマ別セグメント抽出</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>YouTube テーマ別セグメント抽出</h1>
+    
+    <div class="search-container">
+      <input type="text" id="theme-input" placeholder="テーマを入力してください">
+      <select id="level-select">
+        <option value="beginner">ビギナー</option>
+        <option value="intermediate">中級者</option>
+        <option value="expert">専門レベル</option>
+      </select>
+      <select id="duration-select">
+        <option value="30">30分</option>
+        <option value="60">1時間</option>
+        <option value="120">2時間</option>
+      </select>
+      <button id="search-button">検索</button>
+    </div>
+    
+    <div id="player-container">
+      <div id="player"></div>
+    </div>
+    
+    <div id="playlist-container">
+      <h2>再生リスト</h2>
+      <ul id="playlist"></ul>
+    </div>
+    
+    <div id="summary-container">
+      <h2>要約と解説</h2>
+      <div id="summary"></div>
+    </div>
+  </div>
+  
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="script.js"></script>
+</body>
+</html>
