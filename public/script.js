@@ -479,13 +479,16 @@ function playCurrentSegment() {
 
 // 次のセグメントを再生する関数
 function playNextSegment() {
-  if (currentIndex < currentPlaylist.length - 1) {
-    currentIndex++;
-    playCurrentSegment();
-  } else {
+  // 既に最後の動画を再生中かチェック
+  if (currentIndex >= currentPlaylist.length - 1) {
     // 全てのセグメントが再生終了
     document.getElementById('summary').innerHTML += '<p><strong>全てのセグメントの再生が完了しました。</strong></p>';
+    return;
   }
+  
+  // インデックスを増加させて次の動画を再生
+  currentIndex++;
+  playCurrentSegment();
 }
 
 // エンターキーでの検索を有効化
