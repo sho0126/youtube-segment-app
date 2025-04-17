@@ -2,8 +2,18 @@
 let player;
 let currentPlaylist = [];
 let currentIndex = 0;
+let isManualChange = false;
+let playerReady = false;
 
-// YouTube IFrame Player APIの読み込み完了時に呼ばれる関数
+// YouTube IFrame Player APIの読み込み
+function loadYouTubeAPI() {
+  const tag = document.createElement('script');
+  tag.src = 'https://www.youtube.com/iframe_api';
+  const firstScriptTag = document.getElementsByTagName('script') [0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+}
+
+// YouTube Player APIが準備できたら呼ばれる関数
 function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
     height: '360',
@@ -11,8 +21,8 @@ function onYouTubeIframeAPIReady() {
     videoId: '',
     playerVars: {
       'playsinline': 1,
-      'autoplay': 0,
-      'controls': 1
+      'enablejsapi': 1,
+      'rel': 0
     },
     events: {
       'onReady': onPlayerReady,
@@ -21,105 +31,97 @@ function onYouTubeIframeAPIReady() {
   });
 }
 
-// プレーヤーの準備完了時に呼ばれる関数
+// プレーヤーの準備ができたら呼ばれる関数
 function onPlayerReady(event) {
+  playerReady = true;
   console.log('Player ready');
+  
+  // 検索ボタンのイベントリスナー（プレーヤーが準備できた後に設定）
   document.getElementById('search-button').addEventListener('click', searchVideos);
+  
+  // ナビゲーションボタンのイベントリスナー
   document.getElementById('prev-button').addEventListener('click', playPrevious);
   document.getElementById('next-button').addEventListener('click', playNext);
+  
+  // Enterキーでの検索
+  document.getElementById('theme-input').addEventListener('keypress', (event) => {
+    if (event.key === 'Enter') {
+      searchVideos();
+    }
+  });
 }
 
 // プレーヤーの状態変化時に呼ばれる関数
 function onPlayerStateChange(event) {
-  // 動画が終了したら次の動画を再生
-  if (event.data === YT.PlayerState.ENDED) {
+  // 動画が終了したら次の動画を再生（手動変更でない場合のみ）
+  if (event.data === YT.PlayerState.ENDED && !isManualChange) {
+    console.log('Video ended, playing next');
     playNext();
+  }
+  
+  // 再生中状態になったらフラグをリセット
+  if (event.data === YT.PlayerState.PLAYING) {
+    isManualChange = false;
   }
 }
 
 // 動画を検索する関数
 async function searchVideos() {
-  const theme = document.getElementById('theme-input').value;
-  const level = document.getElementById('level-select').value;
-  const duration = document.getElementById('duration-select').value;
+  const themeInput = document.getElementById('theme-input').value;
+  const levelSelect = document.getElementById('level-select').value;
+  const durationSelect = document.getElementById('duration-select').value;
   
-  if (!theme) {
+  if (!themeInput) {
     alert('テーマを入力してください');
     return;
   }
   
-  // 検索中の表示
-  document.getElementById('playlist').innerHTML = '<div class="loading">検索中...</div>';
-  document.getElementById('summary').innerHTML = '<div class="loading">分析中...</div>';
-  document.getElementById('related-topics').innerHTML = '';
-  
   try {
-    // APIリクエスト
-    const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&level=${encodeURIComponent(level)}&duration=${encodeURIComponent(duration)}`);
+    document.getElementById('loading').style.display = 'block';
+    
+    // サーバーに検索リクエストを送信
+    const response = await fetch(`/api/search?query=${encodeURIComponent(themeInput)}&level=${levelSelect}&duration=${durationSelect}`);
     const data = await response.json();
     
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
     if (data.length === 0) {
-      document.getElementById('playlist').innerHTML = '<div class="loading">該当する動画が見つかりませんでした</div>';
-      document.getElementById('summary').innerHTML = '';
+      alert('検索結果が見つかりませんでした。別のテーマで試してください。');
+      document.getElementById('loading').style.display = 'none';
       return;
     }
     
+    // 検索結果を表示
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('theme-display').textContent = themeInput;
+    
     // プレイリストを作成
-    createPlaylist(data, theme);
+    createPlaylist(data, themeInput);
     
-    // 最初の動画を再生
-    playVideo(0);
-    
-    // 関連トピックを表示
-    displayRelatedTopics(data);
+    document.getElementById('loading').style.display = 'none';
   } catch (error) {
     console.error('Error searching videos:', error);
-    document.getElementById('playlist').innerHTML = '<div class="loading">エラーが発生しました</div>';
-    document.getElementById('summary').innerHTML = '';
+    alert('検索中にエラーが発生しました: ' + error.message);
+    document.getElementById('loading').style.display = 'none';
   }
-}
-
-// プレイリストを作成する関数
-function createPlaylist(videos, theme) {
-  currentPlaylist = videos;
-  currentIndex = 0;
-  
-  const playlistElement = document.getElementById('playlist');
-  playlistElement.innerHTML = '';
-  
-  videos.forEach((video, index) => {
-    const segment = video.currentSegment;
-    const startTime = formatTime(segment.startTime);
-    const endTime = formatTime(segment.endTime);
-    
-    const listItem = document.createElement('li');
-    listItem.className = 'playlist-item';
-    listItem.dataset.index = index;
-    listItem.innerHTML = `
-      <div class="playlist-item-title">${video.snippet.title}</div>
-      <div class="playlist-item-time">${startTime} - ${endTime}</div>
-    `;
-    
-    listItem.addEventListener('click', () => {
-      playVideo(index);
-    });
-    
-    playlistElement.appendChild(listItem);
-  });
-  
-  // ナビゲーションボタンの状態を更新
-  updateNavigationButtons();
 }
 
 // 動画を再生する関数
 function playVideo(index) {
-  if (index < 0 || index >= currentPlaylist.length) {
+  if (!playerReady || index < 0 || index >= currentPlaylist.length) {
+    console.log(`Cannot play video: playerReady=${playerReady}, index=${index}, playlist length=${currentPlaylist.length}`);
     return;
   }
   
+  isManualChange = true; // 手動変更フラグを設定
   currentIndex = index;
   const video = currentPlaylist[index];
-  const segment = video.currentSegment;
+  const segment = video.currentSegment || video.segments[0];
+  
+  console.log(`Playing video at index ${index}: ${video.snippet.title}`);
+  console.log(`Segment: ${segment.startTime} - ${segment.endTime}`);
   
   // プレイリストのアクティブ項目を更新
   const playlistItems = document.querySelectorAll('.playlist-item');
@@ -146,14 +148,26 @@ function playVideo(index) {
   updateNavigationButtons();
 }
 
-// 前の動画を再生する関数
-function playPrevious() {
-  playVideo(currentIndex - 1);
-}
-
 // 次の動画を再生する関数
 function playNext() {
-  playVideo(currentIndex + 1);
+  const nextIndex = currentIndex + 1;
+  if (nextIndex < currentPlaylist.length) {
+    console.log(`Moving to next video: index ${nextIndex}`);
+    playVideo(nextIndex);
+  } else {
+    console.log('Reached end of playlist');
+  }
+}
+
+// 前の動画を再生する関数
+function playPrevious() {
+  const prevIndex = currentIndex - 1;
+  if (prevIndex >= 0) {
+    console.log(`Moving to previous video: index ${prevIndex}`);
+    playVideo(prevIndex);
+  } else {
+    console.log('Already at beginning of playlist');
+  }
 }
 
 // ナビゲーションボタンの状態を更新する関数
@@ -165,70 +179,150 @@ function updateNavigationButtons() {
   nextButton.disabled = currentIndex >= currentPlaylist.length - 1;
 }
 
+// プレイリストを作成する関数
+function createPlaylist(videos, theme) {
+  currentPlaylist = videos;
+  currentIndex = 0;
+  
+  const playlistElement = document.getElementById('playlist');
+  playlistElement.innerHTML = '';
+  
+  videos.forEach((video, index) => {
+    // 現在のセグメントを設定
+    video.currentSegment = video.segments[0];
+    
+    const segment = video.currentSegment;
+    const startTime = formatTime(segment.startTime);
+    const endTime = formatTime(segment.endTime);
+    
+    const listItem = document.createElement('li');
+    listItem.className = 'playlist-item';
+    if (index === 0) {
+      listItem.classList.add('active');
+    }
+    
+    listItem.innerHTML = `
+      <div class="playlist-item-title">${video.snippet.title}</div>
+      <div class="playlist-item-time">${startTime} - ${endTime}</div>
+      <div class="playlist-item-relevance">関連度: ${Math.round(segment.relevance * 100)}%</div>
+    `;
+    
+    listItem.addEventListener('click', () => {
+      console.log(`Playlist item clicked: index ${index}`);
+      playVideo(index);
+    });
+    
+    playlistElement.appendChild(listItem);
+  });
+  
+  // 関連テーマの表示
+  displayRelatedThemes(theme);
+  
+  // ナビゲーションボタンの状態を更新
+  updateNavigationButtons();
+  
+  // 最初の動画を再生
+  if (videos.length > 0) {
+    console.log('Starting playlist with first video');
+    setTimeout(() => {
+      playVideo(0);
+    }, 500); // 少し遅延させて確実にプレーヤーが準備できるようにする
+  }
+}
+
 // 要約と解説を表示する関数
 function displaySummary(video) {
   const summaryElement = document.getElementById('summary');
+  const analysis = video.analysis || {};
   
-  if (video.analysis && video.analysis.summary) {
-    summaryElement.innerHTML = `
-      <h3>${video.snippet.title}</h3>
-      <p>${video.analysis.summary}</p>
-    `;
-  } else {
-    summaryElement.innerHTML = `
-      <h3>${video.snippet.title}</h3>
-      <p>${video.snippet.description}</p>
-    `;
-  }
+  let summaryHTML = `
+    <h3>動画の要約</h3>
+    <p>${analysis.summary || '要約は利用できません。'}</p>
+    <h3>解説</h3>
+    <p>${analysis.explanation || '解説は利用できません。'}</p>
+  `;
+  
+  summaryElement.innerHTML = summaryHTML;
 }
 
-// 関連トピックを表示する関数
-function displayRelatedTopics(videos) {
-  const relatedTopicsElement = document.getElementById('related-topics');
-  relatedTopicsElement.innerHTML = '';
+// 関連テーマを表示する関数
+function displayRelatedThemes(theme) {
+  const relatedThemesElement = document.getElementById('related-themes');
   
-  // 全ての動画から関連トピックを収集
-  const allTopics = new Set();
-  videos.forEach(video => {
-    if (video.analysis && video.analysis.relatedTopics) {
-      video.analysis.relatedTopics.forEach(topic => {
-        allTopics.add(topic);
-      });
-    }
+  // 関連テーマのリストを生成（実際のアプリではAPIから取得）
+  const relatedThemes = generateRelatedThemes(theme);
+  
+  let themesHTML = '<h3>関連テーマ</h3><ul>';
+  relatedThemes.forEach(relatedTheme => {
+    themesHTML += `<li><a href="#" onclick="setTheme('${relatedTheme}')">${relatedTheme}</a></li>`;
   });
+  themesHTML += '</ul>';
   
-  // 関連トピックを表示
-  if (allTopics.size > 0) {
-    Array.from(allTopics).forEach(topic => {
-      const listItem = document.createElement('li');
-      listItem.textContent = topic;
-      listItem.addEventListener('click', () => {
-        document.getElementById('theme-input').value = topic;
-        searchVideos();
-      });
-      relatedTopicsElement.appendChild(listItem);
-    });
-  } else {
-    relatedTopicsElement.innerHTML = '<div class="loading">関連トピックがありません</div>';
-  }
+  relatedThemesElement.innerHTML = themesHTML;
 }
 
-// 秒数を MM:SS 形式にフォーマットする関数
+// 関連テーマを生成する関数（実際のアプリではAPIから取得）
+function generateRelatedThemes(theme) {
+  // 簡易的な実装
+  const themes = [
+    `${theme}の基礎`,
+    `${theme}の応用`,
+    `${theme}の歴史`,
+    `${theme}の最新動向`,
+    `${theme}と関連技術`
+  ];
+  
+  return themes;
+}
+
+// テーマを設定する関数
+function setTheme(theme) {
+  document.getElementById('theme-input').value = theme;
+  searchVideos();
+}
+
+// 時間を「分:秒」形式にフォーマットする関数
 function formatTime(seconds) {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = Math.floor(seconds % 60);
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
+// 再生時間を秒に変換する関数
+function getDurationInSeconds(duration) {
+  switch (duration) {
+    case '30min':
+      return 30 * 60;
+    case '1hour':
+      return 60 * 60;
+    case '2hours':
+      return 120 * 60;
+    default:
+      return 30 * 60;
+  }
+}
+
+// デバッグ情報表示関数
+function showDebugInfo() {
+  console.log('Current playlist:', currentPlaylist);
+  console.log('Current index:', currentIndex);
+  if (currentPlaylist[currentIndex]) {
+    console.log('Current video:', currentPlaylist[currentIndex]);
+  }
+  console.log('Player ready:', playerReady);
+}
+
 // ページ読み込み時の初期化
 document.addEventListener('DOMContentLoaded', () => {
-  // 検索ボタンのイベントリスナー（プレーヤーが準備できる前に設定）
-  document.getElementById('search-button').addEventListener('click', searchVideos);
+  loadYouTubeAPI();
   
-  // Enterキーでの検索
-  document.getElementById('theme-input').addEventListener('keypress', (event) => {
-    if (event.key === 'Enter') {
-      searchVideos();
-    }
-  });
+  // デバッグボタンの追加（開発時のみ）
+  const debugButton = document.createElement('button');
+  debugButton.textContent = 'Debug Info';
+  debugButton.style.position = 'fixed';
+  debugButton.style.bottom = '10px';
+  debugButton.style.right = '10px';
+  debugButton.style.zIndex = '1000';
+  debugButton.addEventListener('click', showDebugInfo);
+  document.body.appendChild(debugButton);
 });
