@@ -29,7 +29,7 @@ app.get('/api/search', async (req, res) => {
         key: YOUTUBE_API_KEY,
         type: 'video'
       }
-    }) ;
+    })  ;
     
     // APIキーが無効または制限されている場合のチェック
     if (!response.data || !response.data.items) {
@@ -64,7 +64,7 @@ app.post('/api/analyze-video', async (req, res) => {
         id: videoId,
         key: YOUTUBE_API_KEY
       }
-    }) ;
+    })  ;
     
     if (!response.data || !response.data.items || response.data.items.length === 0) {
       console.log(`Video ${videoId} not found`);
@@ -110,13 +110,116 @@ app.get('/api/video/:id', async (req, res) => {
         id,
         key: YOUTUBE_API_KEY
       }
-    }) ;
+    })  ;
     
     // 動画情報を返す
     res.json(response.data);
   } catch (error) {
     console.error('Error fetching video details:', error);
     res.status(500).json({ error: 'Failed to fetch video details' });
+  }
+});
+
+// 要約生成APIエンドポイント
+app.post('/api/generate-summary', async (req, res) => {
+  try {
+    const { theme, level, videoData } = req.body;
+    
+    if (!theme || !level || !videoData) {
+      return res.status(400).json({ error: 'Missing required parameters' });
+    }
+    
+    // レベルに応じたテキスト
+    const levelText = level === 'beginner' ? 'ビギナー' : 
+                      level === 'intermediate' ? '中級者' : '専門家';
+    
+    // 動画情報のテキスト化
+    const videoInfoText = videoData.map(video => 
+      `タイトル: ${video.title}\n説明: ${video.description}`
+    ).join('\n\n');
+    
+    // OpenAI APIへのプロンプト作成
+    const prompt = `
+あなたは教育コンテンツの専門家です。以下の情報を基に、テーマに関する詳細な要約と学習ガイドを作成してください。
+
+テーマ: ${theme}
+ユーザーレベル: ${levelText}
+関連動画:
+${videoInfoText}
+
+以下の4つのセクションを含む要約を作成してください：
+
+1. テーマの詳細解説（200-300文字）:
+   テーマの基本的な説明、重要性、背景情報を${levelText}に適した深さで解説してください。
+
+2. 主要な学習ポイント（3-5項目）:
+   このテーマについて学ぶ際の重要なポイントを箇条書きでリストアップしてください。
+
+3. 関連キーワード（3-5語）:
+   テーマに関連する重要な用語や概念とその簡潔な説明を提供してください。
+
+4. ${levelText}向け学習ロードマップ（3-5ステップ）:
+   このテーマを学ぶための段階的なアプローチを提案してください。
+
+回答は以下のJSON形式で提供してください：
+{
+  "themeExplanation": "テーマの詳細解説",
+  "learningPoints": ["ポイント1", "ポイント2", "ポイント3"],
+  "keywords": [
+    {
+      "term": "キーワード1",
+      "explanation": "説明1"
+    }
+  ],
+  "roadmap": ["ステップ1", "ステップ2", "ステップ3"]
+}
+`;
+
+    // OpenAI APIを呼び出し
+    const completion = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        { role: "system", content: "あなたは教育コンテンツの専門家です。JSON形式で回答してください。" },
+        { role: "user", content: prompt }
+      ],
+      temperature: 0.7,
+    });
+
+    // APIレスポンスからコンテンツを取得
+    const responseContent = completion.choices[0].message.content;
+    
+    // JSONレスポンスの抽出（正規表現を使用）
+    const jsonMatch = responseContent.match(/\{[\s\S]*\}/);
+    let summaryData;
+    
+    if (jsonMatch) {
+      try {
+        summaryData = JSON.parse(jsonMatch[0]);
+      } catch (parseError) {
+        console.error('Error parsing JSON from OpenAI response:', parseError);
+        // フォールバック: シンプルな要約を生成
+        summaryData = generateFallbackSummary(theme, level, videoData);
+      }
+    } else {
+      // JSONが見つからない場合のフォールバック
+      summaryData = generateFallbackSummary(theme, level, videoData);
+    }
+    
+    // HTML形式の要約を生成
+    const htmlSummary = generateHtmlSummary(summaryData, theme, levelText);
+    
+    // レスポンスを返す
+    res.json({
+      ...summaryData,
+      html: htmlSummary
+    });
+    
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    res.status(500).json({ 
+      error: 'Failed to generate summary',
+      message: error.message
+    });
   }
 });
 
@@ -313,6 +416,73 @@ async function analyzeVideoContent(title, description, theme, level, duration) {
       };
     });
   }
+}
+
+// フォールバック要約生成関数
+function generateFallbackSummary(theme, level, videoData) {
+  const levelText = level === 'beginner' ? 'ビギナー' : 
+                    level === 'intermediate' ? '中級者' : '専門家';
+  
+  return {
+    themeExplanation: `「${theme}」は重要なトピックです。このテーマについて学ぶことで、${levelText}として必要な知識を得ることができます。`,
+    learningPoints: [
+      `${theme}の基本概念を理解する`,
+      `${theme}の実践的な応用方法を学ぶ`,
+      `${theme}に関連する最新の動向を把握する`
+    ],
+    keywords: [
+      {
+        term: `${theme}の基礎`,
+        explanation: `${theme}を理解するための基本的な概念`
+      },
+      {
+        term: `${theme}の応用`,
+        explanation: `${theme}を実際に活用するための方法`
+      }
+    ],
+    roadmap: [
+      `${theme}の基本を学ぶ`,
+      `実践的な例を通じて理解を深める`,
+      `応用スキルを身につける`
+    ]
+  };
+}
+
+// HTML形式の要約生成関数
+function generateHtmlSummary(summaryData, theme, levelText) {
+  const { themeExplanation, learningPoints, keywords, roadmap } = summaryData;
+  
+  const learningPointsHtml = learningPoints.map(point => `<li>${point}</li>`).join('');
+  const keywordsHtml = keywords.map(kw => `<div class="keyword"><strong>${kw.term}</strong>: ${kw.explanation}</div>`).join('');
+  const roadmapHtml = roadmap.map(step => `<li>${step}</li>`).join('');
+  
+  return `
+<div class="summary-section">
+  <h3>テーマ「${theme}」の解説</h3>
+  <p>${themeExplanation}</p>
+</div>
+
+<div class="summary-section">
+  <h3>主要な学習ポイント</h3>
+  <ul>
+    ${learningPointsHtml}
+  </ul>
+</div>
+
+<div class="summary-section">
+  <h3>関連キーワード</h3>
+  <div class="keywords">
+    ${keywordsHtml}
+  </div>
+</div>
+
+<div class="summary-section">
+  <h3>${levelText}向け学習ロードマップ</h3>
+  <ol>
+    ${roadmapHtml}
+  </ol>
+</div>
+`;
 }
 
 // サーバー起動
