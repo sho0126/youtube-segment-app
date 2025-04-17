@@ -4,7 +4,7 @@ let currentPlaylist = [];
 let currentIndex = 0;
 
 // YouTube IFrame Player APIの準備
-function onYouTubeIframeAPIReady() {
+function onYouTubeIframeAPIReady()  {
   player = new YT.Player('player', {
     height: '360',
     width: '640',
