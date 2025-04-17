@@ -25,9 +25,16 @@ function onPlayerReady(event) {
 
 // プレイヤーの状態変化時
 function onPlayerStateChange(event) {
-  // 動画が終了したら次の動画へ
+  // 動画が終了したら次の動画へ（ただし一度だけ）
   if (event.data === YT.PlayerState.ENDED) {
-    playNextSegment();
+    // 現在の動画が最後のものでなければ次へ
+    if (currentIndex < currentPlaylist.length - 1) {
+      currentIndex++;
+      playCurrentSegment();
+    } else {
+      // 全てのセグメントが再生終了
+      document.getElementById('summary').innerHTML += '<p><strong>全てのセグメントの再生が完了しました。</strong></p>';
+    }
   }
 }
 
@@ -54,31 +61,30 @@ async function searchVideos() {
     
     document.getElementById('summary').textContent = '検索中...';
     
-    // APIリクエスト（より多くの結果を取得）
+    // APIリクエスト
     const response = await fetch(`/api/search?query=${encodeURIComponent(theme)}&maxResults=10`);
     const data = await response.json();
     
-    // 検索結果から再生リストを作成
-    if (data && data.items && Array.isArray(data.items)) {
-      // 指定された時間に合わせて再生リストを作成
-      const targetDurationSeconds = parseInt(duration) * 60;
-      await createPlaylistWithDuration(data.items, theme, level, targetDurationSeconds);
-    } else {
-      console.error('Invalid response format:', data);
-      alert('検索結果のフォーマットが無効です');
-      document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
+    if (!data.items || data.items.length === 0) {
+      document.getElementById('summary').textContent = '動画が見つかりませんでした。別のテーマで試してください。';
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+      return;
     }
     
-    // 検索完了後、ローディング表示を非表示
+    // 再生リストを作成
+    await createPlaylistWithDuration(data.items, theme, level, parseInt(duration));
+    
+    // ローディング表示を非表示
     if (loadingElement) {
       loadingElement.style.display = 'none';
     }
   } catch (error) {
     console.error('Error searching videos:', error);
-    alert('動画の検索中にエラーが発生しました: ' + error.message);
     document.getElementById('summary').textContent = 'エラーが発生しました。もう一度お試しください。';
     
-    // エラー時もローディング表示を非表示
+    const loadingElement = document.getElementById('loading');
     if (loadingElement) {
       loadingElement.style.display = 'none';
     }
@@ -87,27 +93,15 @@ async function searchVideos() {
 
 // テーマに関連する動画を選別する関数
 function filterVideosByTheme(videos, theme) {
-  // テーマのキーワードを抽出
-  const keywords = theme.toLowerCase().split(/\s+/).filter(word => word.length > 1);
-  
   return videos.filter(video => {
-    if (!video || !video.id || !video.id.videoId || !video.snippet) return false;
+    const title = video.snippet.title.toLowerCase();
+    const description = video.snippet.description.toLowerCase();
+    const themeWords = theme.toLowerCase().split(/\s+/);
     
-    const title = (video.snippet.title || '').toLowerCase();
-    const description = (video.snippet.description || '').toLowerCase();
-    const content = title + ' ' + description;
-    
-    // 各キーワードの出現回数をカウント
-    let keywordMatches = 0;
-    keywords.forEach(keyword => {
-      if (content.includes(keyword)) {
-        keywordMatches++;
-      }
-    });
-    
-    // キーワードの半分以上が含まれているか、タイトルに直接含まれている場合に選択
-    return keywordMatches >= Math.max(1, Math.floor(keywords.length / 2)) || 
-           keywords.some(keyword => title.includes(keyword));
+    // テーマのキーワードが少なくとも1つ含まれているか確認
+    return themeWords.some(word => 
+      title.includes(word) || description.includes(word)
+    );
   });
 }
 
@@ -257,7 +251,7 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
     
     try {
       // 進捗状況を更新
-      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${selectedVideos.length}の動画を処理しています。`;
+      document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${selectedVideos.length}`;
       
       // 動画分析APIを呼び出し
       const response = await fetch('/api/analyze-video', {
@@ -280,7 +274,7 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
         continue;
       }
       
-      // 関連度とレベル適合度の積でセグメントをソート
+      // 関連度とレベル適合度の値でセグメントをソート
       data.segments.sort((a, b) => {
         const scoreA = a.relevance * a.levelFit;
         const scoreB = b.relevance * b.levelFit;
@@ -315,17 +309,16 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
       
       // 動画を追加済みとしてマーク
       addedVideoIds.add(videoId);
-      
       analyzedVideos++;
       
     } catch (error) {
       console.error('Error analyzing video:', error);
       analyzedVideos++;
     }
-    
-    // 最大5本の動画まで分析
-    if (analyzedVideos >= 5) break;
   }
+  
+  // 最大5本の動画まで分析
+  if (analyzedVideos >= 5) break;
   
   // 再生リストを表示
   displayPlaylist();
@@ -337,7 +330,7 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   const summaryElement = document.getElementById('summary');
   
   // 基本的な要約を表示（APIレスポンス待ちの間）
-  const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
+  const levelText = level === 'beginner' ? '初心者' : level === 'intermediate' ? '中級者' : '専門家';
   
   // 実際の再生リスト時間を計算
   let totalPlaylistDuration = 0;
@@ -348,8 +341,8 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   const totalMin = Math.floor(totalPlaylistDuration / 60);
   const totalSec = Math.round(totalPlaylistDuration % 60);
   
-  summaryElement.textContent = `「${theme}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。総再生時間: ${totalMin}分${totalSec}秒`;
-  summaryElement.innerHTML += '<p>詳細な要約を生成中...</p>';
+  summaryElement.textContent = `「${theme}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。`;
+  summaryElement.innerHTML += `<p>詳細な要約を生成中...</p>`;
   
   // OpenAI APIを使用して詳細な要約を生成
   if (currentPlaylist.length > 0) {
@@ -396,7 +389,6 @@ function displayPlaylist() {
     const levelFitText = segment.levelFit ? `適合度: ${Math.round(segment.levelFit * 100)}%` : '';
     
     li.innerHTML = `
-      <div class="playlist-item-title">${segment.title}</div>
       <div class="playlist-item-time">${timeText}</div>
       <div class="playlist-item-meta">${relevanceText} ${levelFitText}</div>
       <div class="playlist-item-desc">${segment.description}</div>
@@ -421,13 +413,14 @@ function displayRelatedThemes(theme) {
   const relatedThemesElement = document.getElementById('related-themes');
   if (!relatedThemesElement) return;
   
-  // 関連テーマのリストを生成
   const relatedThemes = generateRelatedThemes(theme);
   
   let themesHTML = '<ul>';
+  
   relatedThemes.forEach(relatedTheme => {
     themesHTML += `<li><a href="#" onclick="setTheme('${relatedTheme}'); return false;">${relatedTheme}</a></li>`;
   });
+  
   themesHTML += '</ul>';
   
   relatedThemesElement.innerHTML = themesHTML;
@@ -439,7 +432,6 @@ function generateRelatedThemes(theme) {
   const themes = [
     `${theme}の基礎`,
     `${theme}の応用`,
-    `${theme}の歴史`,
     `${theme}の最新動向`,
     `${theme}と関連技術`
   ];
