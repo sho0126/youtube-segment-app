@@ -85,6 +85,32 @@ async function searchVideos() {
   }
 }
 
+// テーマに関連する動画を選別する関数
+function filterVideosByTheme(videos, theme) {
+  // テーマのキーワードを抽出
+  const keywords = theme.toLowerCase().split(/\s+/).filter(word => word.length > 1);
+  
+  return videos.filter(video => {
+    if (!video || !video.id || !video.id.videoId || !video.snippet) return false;
+    
+    const title = (video.snippet.title || '').toLowerCase();
+    const description = (video.snippet.description || '').toLowerCase();
+    const content = title + ' ' + description;
+    
+    // 各キーワードの出現回数をカウント
+    let keywordMatches = 0;
+    keywords.forEach(keyword => {
+      if (content.includes(keyword)) {
+        keywordMatches++;
+      }
+    });
+    
+    // キーワードの半分以上が含まれているか、タイトルに直接含まれている場合に選択
+    return keywordMatches >= Math.max(1, Math.floor(keywords.length / 2)) || 
+           keywords.some(keyword => title.includes(keyword));
+  });
+}
+
 // 動画のレベル適合度を評価する関数
 function evaluateVideoLevel(video, level) {
   if (!video || !video.snippet) return 0.5; // デフォルト値を返す
@@ -153,17 +179,8 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   currentPlaylist = [];
   currentIndex = 0;
   
-  // テーマに関連する動画を選別（簡易的なフィルタリング）
-  const filteredVideos = videos.filter(video => {
-    if (!video || !video.id || !video.id.videoId || !video.snippet) return false;
-    
-    const title = video.snippet.title;
-    const description = video.snippet.description || '';
-    
-    // テーマとの関連性を簡易的に判断
-    return title.toLowerCase().includes(theme.toLowerCase()) || 
-           description.toLowerCase().includes(theme.toLowerCase());
-  });
+  // テーマに関連する動画を選別（より厳密なフィルタリング）
+  const filteredVideos = filterVideosByTheme(videos, theme);
   
   if (filteredVideos.length === 0) {
     alert('関連する動画が見つかりませんでした');
@@ -187,14 +204,23 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   let totalDuration = 0;
   let analyzedVideos = 0;
   
+  // 既に追加した動画IDを記録するセット
+  const addedVideoIds = new Set();
+  
   // 各動画を分析し、関連セグメントを抽出
   for (const video of selectedVideos) {
     // 目標時間に達したら終了
     if (totalDuration >= targetDurationSeconds) break;
     
+    const videoId = video.id.videoId;
+    
+    // 既に追加済みの動画はスキップ
+    if (addedVideoIds.has(videoId)) {
+      analyzedVideos++;
+      continue;
+    }
+    
     try {
-      const videoId = video.id.videoId;
-      
       // 進捗状況を更新
       document.getElementById('summary').textContent = `動画を分析中...${analyzedVideos + 1}/${selectedVideos.length}の動画を処理しています。`;
       
@@ -251,6 +277,9 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
         // 目標時間に達したら終了
         if (totalDuration >= targetDurationSeconds) break;
       }
+      
+      // 動画を追加済みとしてマーク
+      addedVideoIds.add(videoId);
       
       analyzedVideos++;
       
