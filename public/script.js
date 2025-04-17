@@ -174,6 +174,41 @@ function evaluateVideoLevel(video, level) {
   return Math.max(0.3, levelFit);
 }
 
+// 要約を生成する関数
+async function generateSummary(theme, level, videos) {
+  try {
+    // 動画データの準備
+    const videoData = videos.map(video => ({
+      title: video.snippet.title,
+      description: video.snippet.description,
+      videoId: video.id.videoId
+    }));
+    
+    // APIリクエスト
+    const response = await fetch('/api/generate-summary', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        theme,
+        level,
+        videoData
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to generate summary');
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error generating summary:', error);
+    return null;
+  }
+}
+
 // 再生リスト作成関数
 async function createPlaylistWithDuration(videos, theme, level, targetDurationSeconds) {
   currentPlaylist = [];
@@ -298,6 +333,39 @@ async function createPlaylistWithDuration(videos, theme, level, targetDurationSe
   // 関連テーマを表示
   displayRelatedThemes(theme);
   
+  // 要約を生成して表示
+  const summaryElement = document.getElementById('summary');
+  
+  // 基本的な要約を表示（APIレスポンス待ちの間）
+  const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
+  
+  // 実際の再生リスト時間を計算
+  let totalPlaylistDuration = 0;
+  currentPlaylist.forEach(segment => {
+    totalPlaylistDuration += (segment.endTime - segment.startTime);
+  });
+  
+  const totalMin = Math.floor(totalPlaylistDuration / 60);
+  const totalSec = Math.round(totalPlaylistDuration % 60);
+  
+  summaryElement.textContent = `「${theme}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。総再生時間: ${totalMin}分${totalSec}秒`;
+  summaryElement.innerHTML += '<p>詳細な要約を生成中...</p>';
+  
+  // OpenAI APIを使用して詳細な要約を生成
+  if (currentPlaylist.length > 0) {
+    try {
+      const summaryData = await generateSummary(theme, level, selectedVideos);
+      
+      if (summaryData && summaryData.html) {
+        // HTML形式の要約を表示
+        summaryElement.innerHTML = summaryData.html;
+      }
+    } catch (error) {
+      console.error('Error displaying summary:', error);
+      // エラー時は基本的な要約のままにする
+    }
+  }
+  
   // 最初のセグメントを再生
   if (currentPlaylist.length > 0) {
     playCurrentSegment();
@@ -346,27 +414,6 @@ function displayPlaylist() {
     
     playlistElement.appendChild(li);
   });
-  
-  // 簡易的な要約を表示
-  const summaryElement = document.getElementById('summary');
-  if (currentPlaylist.length > 0) {
-    const level = document.getElementById('level-select').value;
-    const levelText = level === 'beginner' ? 'ビギナー' : level === 'intermediate' ? '中級者' : '専門';
-    const duration = document.getElementById('duration-select').value;
-    
-    // 実際の再生リスト時間を計算
-    let totalDuration = 0;
-    currentPlaylist.forEach(segment => {
-      totalDuration += (segment.endTime - segment.startTime);
-    });
-    
-    const totalMin = Math.floor(totalDuration / 60);
-    const totalSec = Math.round(totalDuration % 60);
-    
-    summaryElement.textContent = `「${document.getElementById('theme-input').value}」に関連する${currentPlaylist.length}個のセグメントから${levelText}向けの再生リストを作成しました。総再生時間: ${totalMin}分${totalSec}秒`;
-  } else {
-    summaryElement.textContent = '';
-  }
 }
 
 // 関連テーマを表示する関数
@@ -437,7 +484,7 @@ function playNextSegment() {
     playCurrentSegment();
   } else {
     // 全てのセグメントが再生終了
-    document.getElementById('summary').textContent += '\n\n全てのセグメントの再生が完了しました。';
+    document.getElementById('summary').innerHTML += '<p><strong>全てのセグメントの再生が完了しました。</strong></p>';
   }
 }
 
